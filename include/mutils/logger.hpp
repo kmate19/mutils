@@ -57,8 +57,9 @@ struct LogSink {
   // subsequent calls reopen the file (truncating unless append=true).
   bool open(const std::filesystem::path &path, bool append = false) {
     std::lock_guard lock(mtx);
-    if (file.is_open())
+    if (file.is_open()) {
       file.close();
+    }
     auto mode = std::ios::out | (append ? std::ios::app : std::ios::trunc);
     file.open(path, mode);
     return file.is_open();
@@ -66,8 +67,9 @@ struct LogSink {
 
   void close() {
     std::lock_guard lock(mtx);
-    if (file.is_open())
+    if (file.is_open()) {
       file.close();
+    }
   }
 
   bool is_open() const { return file.is_open(); }

@@ -12,7 +12,8 @@ namespace mutils {
 inline std::optional<std::vector<char>> readFile(const std::string &filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
   if (!file.is_open()) {
-    LOG_ERR("Failed to open file: {} - {}", filename, strerror(errno));
+    LOG_ERR("Failed to open file: {} - {}", filename,
+            std::system_category().message(errno));
     return std::nullopt;
   }
   size_t fileSize = static_cast<size_t>(file.tellg());
@@ -29,7 +30,8 @@ inline std::optional<std::string>
 readFileToString(const std::string &filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
   if (!file.is_open()) {
-    LOG_ERR("Failed to open file: {} - {}", filename, strerror(errno));
+    LOG_ERR("Failed to open file: {} - {}", filename,
+            std::system_category().message(errno));
     return std::nullopt;
   }
   std::string buffer(static_cast<size_t>(file.tellg()), '\0');

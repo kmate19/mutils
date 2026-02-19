@@ -1,7 +1,12 @@
 #include "mutils/mutils.hpp"
+#include <system_error>
 
 int main() {
-  mutils::Logger::init_file("test_log.txt");
+  if (!mutils::Logger::init_file("test_log.txt")) {
+    LOG_ERR("Failed to initialize log file, {}",
+            std::system_category().message(errno));
+  };
+  DEFER(mutils::Logger::close_file());
   mutils::Logger::print_build_info();
   auto timer = mutils::Timer{};
   DEFER(timer.printElapsed("Total execution time"));
