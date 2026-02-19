@@ -1,6 +1,8 @@
 #include "mutils/mutils.hpp"
 
 int main() {
+  mutils::Logger::init_file("test_log.txt");
+  mutils::Logger::print_build_info();
   auto timer = mutils::Timer{};
   DEFER(timer.printElapsed("Total execution time"));
   DEFER(LOG("Exiting main function"));

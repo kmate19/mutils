@@ -1,8 +1,12 @@
 #pragma once
 
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <mutex>
+#include <sstream>
 #include <thread>
 
 #ifdef _WIN32
@@ -35,7 +39,61 @@
 #endif
 #endif
 
+#define STRINGIFY_(x) #x
+#define STRINGIFY(x) STRINGIFY_(x)
+
 namespace mutils {
+
+struct LogSink {
+  std::mutex mtx;
+  std::ofstream file;
+
+  static LogSink &get() {
+    static LogSink instance;
+    return instance;
+  }
+
+  // Call once before spawning threads. Safe to call multiple times;
+  // subsequent calls reopen the file (truncating unless append=true).
+  bool open(const std::filesystem::path &path, bool append = false) {
+    std::lock_guard lock(mtx);
+    if (file.is_open())
+      file.close();
+    auto mode = std::ios::out | (append ? std::ios::app : std::ios::trunc);
+    file.open(path, mode);
+    return file.is_open();
+  }
+
+  void close() {
+    std::lock_guard lock(mtx);
+    if (file.is_open())
+      file.close();
+  }
+
+  bool is_open() const { return file.is_open(); }
+
+  // Write to file (must be called with mtx held).
+  // Strips ANSI escape sequences so the file stays clean.
+  void write_to_file(std::string_view msg) {
+    // Simple state-machine ANSI stripper
+    bool in_escape = false;
+    for (char c : msg) {
+      if (in_escape) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+          in_escape = false;
+      } else if (c == '\033') {
+        in_escape = true;
+      } else {
+        file << c;
+      }
+    }
+    file << '\n';
+  }
+
+private:
+  LogSink() = default;
+};
+
 class Logger {
 public:
   Logger(const Logger &) = delete;
@@ -43,162 +101,151 @@ public:
   Logger(Logger &&) = delete;
   Logger &operator=(Logger &&) = delete;
 
+  static bool init_file(const std::filesystem::path &path,
+                        bool append = false) {
+    return LogSink::get().open(path, append);
+  }
+
+  static void close_file() { LogSink::get().close(); }
+
   template <typename... Args>
   inline void log(std::format_string<Args...> fmt, Args &&...fmt_args) const {
-    auto out = std::format(fmt, std::forward<Args>(fmt_args)...);
-
-    std::cout << thread_color_ << "[THREAD " << thread_id_ << "] " << log_color_
-              << "[LOG]: " << out << reset_ << "\n";
+    auto body = std::format(fmt, std::forward<Args>(fmt_args)...);
+    auto msg = thread_color_ + std::format("[THREAD {}] ", thread_id_str_) +
+               log_color_ + std::string("[LOG]: ") + body + reset_;
+    write(msg, /*flush=*/false);
   }
 
   template <typename... Args>
   inline void err(std::format_string<Args...> fmt, Args &&...fmt_args) const {
-    auto out = std::format(fmt, std::forward<Args>(fmt_args)...);
-
-    std::cerr << thread_color_ << "[THREAD " << thread_id_ << "] "
-              << error_color_ << "[ERROR]: " << out << reset_ << "\n";
+    auto body = std::format(fmt, std::forward<Args>(fmt_args)...);
+    auto msg = thread_color_ + std::format("[THREAD {}] ", thread_id_str_) +
+               error_color_ + std::string("[ERROR]: ") + body + reset_;
+    write(msg, /*flush=*/true, /*use_stderr=*/true);
   }
 
   template <typename... Args>
   inline void warn(std::format_string<Args...> fmt, Args &&...fmt_args) const {
-    auto out = std::format(fmt, std::forward<Args>(fmt_args)...);
-
-    std::cerr << thread_color_ << "[THREAD " << thread_id_ << "] "
-              << warn_color_ << "[WARNING]: " << out << reset_ << "\n";
+    auto body = std::format(fmt, std::forward<Args>(fmt_args)...);
+    auto msg = thread_color_ + std::format("[THREAD {}] ", thread_id_str_) +
+               warn_color_ + std::string("[WARNING]: ") + body + reset_;
+    write(msg, /*flush=*/false, /*use_stderr=*/true);
   }
 
   inline static void print_build_info() {
-    std::cout << "=== Build Information ===\n";
-
+    static_write("=== Build Information ===", /*flush=*/true);
     // Build type
     if constexpr (IS_DEBUG_BUILD) {
-      std::cout << "Build Type: DEBUG\n";
+      static_write("Build Type: DEBUG", /*flush=*/true);
     } else {
-      std::cout << "Build Type: RELEASE\n";
+      static_write("Build Type: RELEASE", /*flush=*/true);
     }
-
     // Compiler information
-    std::cout << "Compiler: ";
 #if defined(__clang__)
-    std::cout << "Clang " << __clang_major__ << "." << __clang_minor__ << "."
-              << __clang_patchlevel__ << "\n";
+    static_write("Compiler: Clang " STRINGIFY(__clang_major__) "." STRINGIFY(
+                     __clang_minor__) "." STRINGIFY(__clang_patchlevel__),
+                 /*flush=*/true);
 #elif defined(__GNUC__) || defined(__GNUG__)
-    std::cout << "GCC " << __GNUC__ << "." << __GNUC_MINOR__ << "."
-              << __GNUC_PATCHLEVEL__ << "\n";
+    static_write("Compiler: GCC " STRINGIFY(__GNUC__) "." STRINGIFY(
+                     __GNUC_MINOR__) "." STRINGIFY(__GNUC_PATCHLEVEL__),
+                 /*flush=*/true);
 #elif defined(_MSC_VER)
-    std::cout << "MSVC " << _MSC_VER << "\n";
+    static_write("Compiler: MSVC " STRINGIFY(_MSC_VER), /*flush=*/true);
 #else
-    std::cout << "Unknown\n";
+    static_write("Compiler: Unknown", /*flush=*/true);
 #endif
-
     // C++ Standard
-    std::cout << "C++ Standard: ";
 #if __cplusplus == 202302L
-    std::cout << "C++23\n";
+    static_write("C++ Standard: C++23", /*flush=*/true);
 #elif __cplusplus == 202002L
-    std::cout << "C++20\n";
+    static_write("C++ Standard: C++20", /*flush=*/true);
 #elif __cplusplus == 201703L
-    std::cout << "C++17\n";
+    static_write("C++ Standard: C++17", /*flush=*/true);
 #elif __cplusplus == 201402L
-    std::cout << "C++14\n";
+    static_write("C++ Standard: C++14", /*flush=*/true);
 #elif __cplusplus == 201103L
-    std::cout << "C++11\n";
+    static_write("C++ Standard: C++11", /*flush=*/true);
 #else
-    std::cout << "Pre-C++11 or unknown (" << __cplusplus << ")\n";
+    static_write(
+        "C++ Standard: Pre-C++11 or unknown (" STRINGIFY(__cplusplus) ")",
+        /*flush=*/true);
 #endif
-
     // Platform
-    std::cout << "Platform: ";
 #if defined(_WIN32) || defined(_WIN64)
-    std::cout << "Windows";
 #ifdef _WIN64
-    std::cout << " (64-bit)";
+    static_write("Platform: Windows (64-bit)", /*flush=*/true);
 #else
-    std::cout << " (32-bit)";
+    static_write("Platform: Windows (32-bit)", /*flush=*/true);
 #endif
-    std::cout << "\n";
 #elif defined(__APPLE__) || defined(__MACH__)
-    std::cout << "macOS\n";
+    static_write("Platform: macOS", /*flush=*/true);
 #elif defined(__linux__)
-    std::cout << "Linux\n";
+    static_write("Platform: Linux", /*flush=*/true);
 #elif defined(__unix__)
-    std::cout << "Unix\n";
+    static_write("Platform: Unix", /*flush=*/true);
 #elif defined(__FreeBSD__)
-    std::cout << "FreeBSD\n";
+    static_write("Platform: FreeBSD", /*flush=*/true);
 #else
-    std::cout << "Unknown\n";
+    static_write("Platform: Unknown", /*flush=*/true);
 #endif
-
     // Architecture
-    std::cout << "Architecture: ";
 #if defined(__x86_64__) || defined(_M_X64)
-    std::cout << "x86_64\n";
+    static_write("Architecture: x86_64", /*flush=*/true);
 #elif defined(__i386__) || defined(_M_IX86)
-    std::cout << "x86\n";
+    static_write("Architecture: x86", /*flush=*/true);
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    std::cout << "ARM64\n";
+    static_write("Architecture: ARM64", /*flush=*/true);
 #elif defined(__arm__) || defined(_M_ARM)
-    std::cout << "ARM\n";
+    static_write("Architecture: ARM", /*flush=*/true);
 #else
-    std::cout << "Unknown\n";
+    static_write("Architecture: Unknown", /*flush=*/true);
 #endif
-
     // Optimizations
-    std::cout << "Optimizations: ";
 #if defined(__OPTIMIZE__)
-    std::cout << "Enabled";
 #if defined(__OPTIMIZE_SIZE__)
-    std::cout << " (Size)";
-#endif
-    std::cout << "\n";
+    static_write("Optimizations: Enabled (Size)", /*flush=*/true);
 #else
-    std::cout << "Disabled\n";
+    static_write("Optimizations: Enabled", /*flush=*/true);
 #endif
-
+#else
+    static_write("Optimizations: Disabled", /*flush=*/true);
+#endif
     // Assertions
-    std::cout << "Assertions: ";
 #ifdef NDEBUG
-    std::cout << "Disabled\n";
+    static_write("Assertions: Disabled", /*flush=*/true);
 #else
-    std::cout << "Enabled\n";
+    static_write("Assertions: Enabled", /*flush=*/true);
 #endif
-
     // Additional compiler flags
-    std::cout << "Additional Features:\n";
-
+    static_write("Additional Features:", /*flush=*/true);
 #ifdef __SSE__
-    std::cout << "  - SSE: Enabled\n";
+    static_write("  - SSE: Enabled", /*flush=*/true);
 #endif
 #ifdef __SSE2__
-    std::cout << "  - SSE2: Enabled\n";
+    static_write("  - SSE2: Enabled", /*flush=*/true);
 #endif
 #ifdef __AVX__
-    std::cout << "  - AVX: Enabled\n";
+    static_write("  - AVX: Enabled", /*flush=*/true);
 #endif
 #ifdef __AVX2__
-    std::cout << "  - AVX2: Enabled\n";
+    static_write("  - AVX2: Enabled", /*flush=*/true);
 #endif
-
 #ifdef _OPENMP
-    std::cout << "  - OpenMP: Enabled\n";
+    static_write("  - OpenMP: Enabled", /*flush=*/true);
 #endif
-
 #ifdef __cpp_exceptions
-    std::cout << "  - Exceptions: Enabled\n";
+    static_write("  - Exceptions: Enabled", /*flush=*/true);
 #else
-    std::cout << "  - Exceptions: Disabled\n";
+    static_write("  - Exceptions: Disabled", /*flush=*/true);
 #endif
-
 #ifdef __cpp_rtti
-    std::cout << "  - RTTI: Enabled\n";
+    static_write("  - RTTI: Enabled", /*flush=*/true);
 #else
-    std::cout << "  - RTTI: Disabled\n";
+    static_write("  - RTTI: Disabled", /*flush=*/true);
 #endif
-
     // Compile time and date
-    std::cout << "Compiled: " << __DATE__ << " at " << __TIME__ << "\n";
-
-    std::cout << "=========================\n";
+    static_write("Compiled: " __DATE__ " at " __TIME__, /*flush=*/true);
+    static_write("=========================", /*flush=*/true);
   }
 
   static Logger &get() {
@@ -209,15 +256,18 @@ public:
   template <typename... Args>
   inline void dbg(std::format_string<Args...> fmt, Args &&...fmt_args) const {
     if constexpr (IS_DEBUG_BUILD) {
-      auto out = std::format(fmt, std::forward<Args>(fmt_args)...);
-
-      std::cout << thread_color_ << "[THREAD " << thread_id_ << "] "
-                << log_color_ << "[DEBUG]: " << out << reset_ << "\n";
+      auto body = std::format(fmt, std::forward<Args>(fmt_args)...);
+      auto msg = thread_color_ + std::format("[THREAD {}] ", thread_id_str_) +
+                 log_color_ + std::string("[DEBUG]: ") + body + reset_;
+      write(msg, /*flush=*/false);
     }
   }
 
 private:
   Logger() : thread_id_(std::this_thread::get_id()) {
+    std::ostringstream oss;
+    oss << thread_id_;
+    thread_id_str_ = oss.str();
     // Check if stdout/stderr are connected to a terminal
     bool stdout_is_tty = ISATTY(FILENO(stdout));
     bool stderr_is_tty = ISATTY(FILENO(stderr));
@@ -231,6 +281,26 @@ private:
       error_color_ = "\033[31m"; // Red
       reset_ = "\033[0m";
     }
+  }
+
+  void write(const std::string &msg, bool flush,
+             bool use_stderr = false) const {
+    auto &sink = LogSink::get();
+    std::lock_guard lock(sink.mtx);
+
+    auto &stream = use_stderr ? std::cerr : std::cout;
+    stream << msg << '\n';
+
+    if (sink.file.is_open()) {
+      sink.write_to_file(msg);
+      if (flush)
+        sink.file.flush();
+    }
+  }
+
+  static void static_write(const std::string &msg, bool flush,
+                           bool use_stderr = false) {
+    get().write(msg, flush, use_stderr);
   }
 
   const char *compute_thread_color() const {
@@ -259,6 +329,7 @@ private:
 #endif
 
   std::thread::id thread_id_;
+  std::string thread_id_str_;
   const char *thread_color_ = "";
   const char *log_color_ = "";
   const char *warn_color_ = "";

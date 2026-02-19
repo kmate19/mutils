@@ -1,2 +1,3 @@
 build
 .cache
+test_log.txt
