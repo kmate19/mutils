@@ -20,6 +20,11 @@ inline std::optional<std::vector<char>> readFile(const std::string &filename) {
   std::vector<char> buffer(fileSize);
   file.seekg(0);
   file.read(buffer.data(), fileSize);
+  if (file.fail()) {
+    LOG_ERR("Failed to read file: {} - {}", filename,
+            std::system_category().message(errno));
+    return std::nullopt;
+  }
   file.close();
   return buffer;
 }
