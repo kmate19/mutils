@@ -6,6 +6,8 @@ int main() {
     LOG_ERR("Failed to initialize log file, {}",
             std::system_category().message(errno));
   };
+
+  LOG_WCTX("This is a log message with context, value: {}", 123);
   DEFER(mutils::Logger::close_file());
   mutils::Logger::print_build_info();
   auto timer = mutils::Timer{};
@@ -22,7 +24,7 @@ int main() {
   }
 
   LOG("File read successfully, size: {} bytes", file2->size());
-  LOG_DBG("This is a debug message with file2:\n {}", *file2);
+  LOG("This is a debug message with file2:\n {}", *file2);
 
   for (const auto &line : mutils::lines(*file2)) {
     LOG_DBG("Line: {}", line);

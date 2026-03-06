@@ -33,7 +33,7 @@ inline std::optional<std::vector<char>> readFile(const std::string &filename) {
 // failure.
 inline std::optional<std::string>
 readFileToString(const std::string &filename) {
-  std::ifstream file(filename, std::ios::ate | std::ios::binary);
+  std::ifstream file(filename, std::ios::ate);
   if (!file.is_open()) {
     LOG_ERR("Failed to open file: {} - {}", filename,
             std::system_category().message(errno));
