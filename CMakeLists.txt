@@ -14,6 +14,11 @@ endif()
 add_library(mutils INTERFACE)
 target_include_directories(mutils INTERFACE include/)
 
+# check if we're on windows, if we are link dbghelp for stack traces
+if(WIN32)
+    target_link_libraries(mutils INTERFACE dbghelp)
+endif()
+
 option(MUTILS_BUILD_TESTS "Build tests" ON)
 if(MUTILS_BUILD_TESTS)
     enable_testing()

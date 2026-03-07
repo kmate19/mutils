@@ -1,7 +1,14 @@
 #include "mutils/mutils.hpp"
+#include "mutils/os.hpp"
 #include <system_error>
 
+void crash() {
+  char buffer[16];
+  memset(buffer, 0xAA, 1024);
+}
+
 int main() {
+  mutils::instrumentSigsegv();
   if (!mutils::Logger::init_file("test_log.txt")) {
     LOG_ERR("Failed to initialize log file, {}",
             std::system_category().message(errno));
