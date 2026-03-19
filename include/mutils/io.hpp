@@ -4,6 +4,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mutils {
@@ -42,55 +43,60 @@ readFileToString(const std::string &filename) {
   std::string buffer(static_cast<size_t>(file.tellg()), '\0');
   file.seekg(0);
   file.read(buffer.data(), buffer.size());
+  if (file.fail()) {
+    LOG_ERR("Failed to read file: {} - {}", filename,
+            std::system_category().message(errno));
+    return std::nullopt;
+  }
   return buffer;
 }
 
 // A simple range class to iterate over lines in a string without copying
 class LineRange {
 public:
-  explicit LineRange(const std::string &str) : str_(str) {}
+  explicit LineRange(const std::string_view str) : str_(str) {}
 
   struct Iterator {
-    const std::string &str;
-    size_t pos;
-    std::string current;
+    const std::string_view str_;
+    size_t pos_;
+    std::string_view current_;
 
-    Iterator(const std::string &str, size_t pos) : str(str), pos(pos) {
+    Iterator(const std::string_view str, size_t pos) : str_(str), pos_(pos) {
       advance();
     }
 
     void advance() {
-      if (pos >= str.size()) {
-        pos = std::string::npos;
+      if (pos_ == std::string_view::npos || pos_ >= str_.size()) {
+        pos_ = std::string_view::npos;
         return;
       }
-      size_t end = str.find('\n', pos);
-      if (end == std::string::npos) {
-        current = str.substr(pos);
-        pos = std::string::npos;
+      size_t end = str_.find('\n', pos_);
+      if (end == std::string_view::npos) {
+        current_ = str_.substr(pos_);
+        pos_ = std::string_view::npos;
       } else {
-        current = str.substr(pos, end - pos);
-        pos = end + 1;
+        current_ = str_.substr(pos_, end - pos_);
+        pos_ = end + 1;
       }
     }
 
-    const std::string &operator*() const { return current; }
+    std::string_view operator*() const { return current_; }
     Iterator &operator++() {
       advance();
       return *this;
     }
-    bool operator!=(const Iterator &other) const { return pos != other.pos; }
+    bool operator!=(const Iterator &other) const { return pos_ != other.pos_; }
   };
 
   Iterator begin() const { return Iterator(str_, 0); }
-  Iterator end() const { return Iterator(str_, std::string::npos); }
+  Iterator end() const { return Iterator(str_, std::string_view::npos); }
 
 private:
-  const std::string &str_;
+  const std::string_view str_;
 };
 
 // Returns a LineRange that can be used to iterate over lines in the input
 // string
-inline LineRange lines(const std::string &str) { return LineRange(str); }
+inline LineRange lines(const std::string_view str) { return LineRange(str); }
 
 } // namespace mutils

@@ -24,8 +24,6 @@
 #define FILENO fileno
 #endif
 
-inline bool tty = ISATTY(FILENO(stdout)) || ISATTY(FILENO(stderr));
-
 #ifndef LOG
 #define LOG mutils::Logger::get().log
 #endif
@@ -55,6 +53,8 @@ inline bool tty = ISATTY(FILENO(stdout)) || ISATTY(FILENO(stderr));
 #define STRINGIFY(x) STRINGIFY_(x)
 
 namespace mutils {
+inline bool tty = ISATTY(FILENO(stdout)) || ISATTY(FILENO(stderr));
+
 struct StaticConfig {
   const std::string_view log_color;
   const std::string_view warn_color;
@@ -529,5 +529,5 @@ private:
   std::string_view warn_label_ = "[WARN]: ";
   std::string_view debug_label_ = "[DEBUG]: ";
   const StaticConfig &config_ = StaticConfig::get();
-}; // namespace myproj
+};
 } // namespace mutils
