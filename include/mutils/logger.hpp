@@ -16,12 +16,12 @@
 
 #ifdef _WIN32
 #include <io.h>
-#define ISATTY _isatty
-#define FILENO _fileno
+#define MUTILS_ISATTY _isatty
+#define MUTILS_FILENO _fileno
 #else
 #include <unistd.h>
-#define ISATTY isatty
-#define FILENO fileno
+#define MUTILS_ISATTY isatty
+#define MUTILS_FILENO fileno
 #endif
 
 #ifndef LOG
@@ -53,62 +53,6 @@
 #define STRINGIFY(x) STRINGIFY_(x)
 
 namespace mutils {
-inline bool tty = ISATTY(FILENO(stdout)) || ISATTY(FILENO(stderr));
-
-struct StaticConfig {
-  const std::string_view log_color;
-  const std::string_view warn_color;
-  const std::string_view error_color;
-  const std::string_view reset;
-  const bool is_tty = false;
-
-  static const StaticConfig &get() {
-    static StaticConfig cfg = [] {
-      return StaticConfig{
-          tty ? "\033[32m" : "",
-          tty ? "\033[33m" : "",
-          tty ? "\033[31m" : "",
-          tty ? "\033[0m" : "",
-          tty,
-      };
-    }();
-    return cfg;
-  }
-};
-
-constexpr std::string_view extract_context(std::string_view fn,
-                                           int level) noexcept {
-  if (fn.empty())
-    return {};
-
-  // strip nothing at the highest log level
-  if (level == 4)
-    return fn;
-
-  // --- strip parameters: everything from the last '(' onward ---
-  // We want the last '(' that belongs to the parameter list, not a lambda's
-  // operator() argument list, so take the first '(' for simplicity —
-  // works for the common case of regular methods/functions.
-  auto paren = fn.find('(');
-  if (paren != std::string_view::npos)
-    fn = fn.substr(0, paren);
-
-  // --- strip return type / leading keywords ---
-  // The qualified name starts after the last space (if any).
-  auto space = fn.rfind(' ');
-  if (space != std::string_view::npos)
-    fn = fn.substr(space + 1);
-
-  // fn is now something like "dwarf::Renderer::draw" or "free_func"
-
-  // --- strip the final ::member to get the owning scope ---
-  auto last_colon = fn.rfind("::");
-  if (last_colon == std::string_view::npos)
-    return {}; // free function — no context
-
-  return fn.substr(0, last_colon);
-}
-
 struct LogSink {
   std::mutex mtx;
   std::ofstream file;
@@ -117,6 +61,8 @@ struct LogSink {
     static LogSink instance;
     return instance;
   }
+
+  ~LogSink() { close(); }
 
   // Call once before spawning threads. Safe to call multiple times;
   // subsequent calls reopen the file (truncating unless append=true).
@@ -143,6 +89,7 @@ struct LogSink {
   // Strips ANSI escape sequences so the file stays clean.
   void write_to_file(std::string_view msg) {
     // Simple state-machine ANSI stripper
+#if 0
     bool in_escape = false;
     for (char c : msg) {
       if (in_escape) {
@@ -154,6 +101,24 @@ struct LogSink {
         file << c;
       }
     }
+#else
+    int escape_state = 0; // 0: Normal, 1: ESC found, 2: Inside CSI sequence
+    for (char c : msg) {
+      if (escape_state == 1) {
+        if (c == '[')
+          escape_state = 2; // Start of CSI
+        else
+          escape_state = 0; // Not a CSI, abort stripping
+      } else if (escape_state == 2) {
+        if (c >= 0x40 && c <= 0x7E)
+          escape_state = 0; // End of CSI sequence
+      } else if (c == '\033') {
+        escape_state = 1;
+      } else {
+        file << c;
+      }
+    }
+#endif
     file << '\n';
   }
 
@@ -164,6 +129,31 @@ private:
 enum class LogLevel { DEBUG, INFO, WARN, ERR };
 
 class Logger {
+
+  struct StaticConfig {
+    const std::string_view log_color;
+    const std::string_view warn_color;
+    const std::string_view error_color;
+    const std::string_view reset;
+    const bool is_tty = false;
+
+    static const StaticConfig &get() {
+      static StaticConfig cfg = [] {
+        static const bool tty = MUTILS_ISATTY(MUTILS_FILENO(stdout)) ||
+                                MUTILS_ISATTY(MUTILS_FILENO(stderr));
+
+        return StaticConfig{
+            tty ? "\033[32m" : "",
+            tty ? "\033[33m" : "",
+            tty ? "\033[31m" : "",
+            tty ? "\033[0m" : "",
+            tty,
+        };
+      }();
+      return cfg;
+    }
+  };
+
 public:
   Logger(const Logger &) = delete;
   Logger &operator=(const Logger &) = delete;
@@ -174,6 +164,8 @@ public:
     thread_local Logger instance{};
     return instance;
   }
+
+  ~Logger() { close_file(); }
 
   static bool init_file(const std::filesystem::path &path,
                         bool append = false) {
@@ -332,6 +324,39 @@ public:
     static_write("=========================", /*flush=*/true);
   }
 
+  constexpr std::string_view extract_context(std::string_view fn,
+                                             int level) const noexcept {
+    if (fn.empty())
+      return {};
+
+    // strip nothing at the highest log level
+    if (level == 4)
+      return fn;
+
+    // --- strip parameters: everything from the last '(' onward ---
+    // We want the last '(' that belongs to the parameter list, not a lambda's
+    // operator() argument list, so take the first '(' for simplicity —
+    // works for the common case of regular methods/functions.
+    auto paren = fn.find('(');
+    if (paren != std::string_view::npos)
+      fn = fn.substr(0, paren);
+
+    // --- strip return type / leading keywords ---
+    // The qualified name starts after the last space (if any).
+    auto space = fn.rfind(' ');
+    if (space != std::string_view::npos)
+      fn = fn.substr(space + 1);
+
+    // fn is now something like "dwarf::Renderer::draw" or "free_func"
+
+    // --- strip the final ::member to get the owning scope ---
+    auto last_colon = fn.rfind("::");
+    if (last_colon == std::string_view::npos)
+      return {}; // free function — no context
+
+    return fn.substr(0, last_colon);
+  }
+
 private:
   Logger() : thread_id_(std::this_thread::get_id()) {
     std::ostringstream oss;
@@ -398,14 +423,17 @@ private:
 
   void write_context_tag(const std::source_location &loc) const {
     auto ctx = extract_context(loc.function_name(), 4);
+
+    // TODO: check for buffer overflow here
+
     if (ctx.empty())
       return;
 
-    memcpy(buf_.data() + buf_offset_, "[", 1);
+    std::memcpy(buf_.data() + buf_offset_, "[", 1);
     buf_offset_ += 1;
-    memcpy(buf_.data() + buf_offset_, ctx.data(), ctx.size());
+    std::memcpy(buf_.data() + buf_offset_, ctx.data(), ctx.size());
     buf_offset_ += ctx.size();
-    memcpy(buf_.data() + buf_offset_, "] ", 2);
+    std::memcpy(buf_.data() + buf_offset_, "] ", 2);
     buf_offset_ += 2;
   }
 
