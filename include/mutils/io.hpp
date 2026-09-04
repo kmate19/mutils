@@ -1,16 +1,30 @@
 #pragma once
 
 #include "logger.hpp"
+
+#include <cstddef>
 #include <fstream>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace mutils {
+
+template <std::ranges::contiguous_range Rng> inline char *as_chars(Rng &rng) {
+  return reinterpret_cast<char *>(std::ranges::data(rng));
+}
+
+template <std::ranges::contiguous_range Rng>
+inline const char *as_chars(Rng const &rng) {
+  return reinterpret_cast<const char *>(std::ranges::data(rng));
+}
+
 // Reads the entire contents of a file into a vector of chars. Returns
 // std::nullopt on failure.
-inline std::optional<std::vector<char>> readFile(const std::string &filename) {
+inline std::optional<std::vector<std::byte>>
+readFile(const std::string &filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
   if (!file.is_open()) {
     LOG_ERR("Failed to open file: {} - {}", filename,
@@ -18,9 +32,9 @@ inline std::optional<std::vector<char>> readFile(const std::string &filename) {
     return std::nullopt;
   }
   size_t fileSize = static_cast<size_t>(file.tellg());
-  std::vector<char> buffer(fileSize);
+  std::vector<std::byte> buffer(fileSize);
   file.seekg(0);
-  file.read(buffer.data(), fileSize);
+  file.read(as_chars(buffer), fileSize);
   if (file.fail()) {
     LOG_ERR("Failed to read file: {} - {}", filename,
             std::system_category().message(errno));
