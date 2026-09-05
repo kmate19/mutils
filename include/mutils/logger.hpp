@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
@@ -459,9 +460,12 @@ private:
     write_thread_();
     write_level_(level);
 
+    assert(buf_offset_ <= buf_.size());
+
     auto res =
-        std::format_to_n(buf_.data() + buf_offset_, buf_.size() - buf_offset_,
-                         fmt, std::forward<Args>(args)...);
+        std::format_to_n(buf_.data() + buf_offset_,
+                         static_cast<ptrdiff_t>(buf_.size() - buf_offset_), fmt,
+                         std::forward<Args>(args)...);
 
     ptrdiff_t remaining_space =
         buf_.size() - (buf_offset_ + res.size + 1 + config_.reset.size());
@@ -493,9 +497,12 @@ private:
     write_context_tag(loc);
     write_level_(level);
 
+    assert(buf_offset_ <= buf_.size());
+
     auto res =
-        std::format_to_n(buf_.data() + buf_offset_, buf_.size() - buf_offset_,
-                         fmt, std::forward<Args>(args)...);
+        std::format_to_n(buf_.data() + buf_offset_,
+                         static_cast<ptrdiff_t>(buf_.size() - buf_offset_), fmt,
+                         std::forward<Args>(args)...);
 
     ptrdiff_t remaining_space =
         buf_.size() - (buf_offset_ + res.size + 1 + config_.reset.size());
