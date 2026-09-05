@@ -462,13 +462,15 @@ private:
 
     assert(buf_offset_ <= buf_.size());
 
-    auto res =
-        std::format_to_n(buf_.data() + buf_offset_,
-                         static_cast<ptrdiff_t>(buf_.size() - buf_offset_), fmt,
-                         std::forward<Args>(args)...);
+    auto n = static_cast<ptrdiff_t>(buf_.size() - buf_offset_);
+
+    auto res = std::format_to_n(buf_.data() + buf_offset_, n, fmt,
+                                std::forward<Args>(args)...);
 
     ptrdiff_t remaining_space =
-        buf_.size() - (buf_offset_ + res.size + 1 + config_.reset.size());
+        static_cast<ptrdiff_t>(buf_.size()) -
+        (static_cast<ptrdiff_t>(buf_offset_) + res.size + 1 +
+         static_cast<ptrdiff_t>(config_.reset.size()));
 
     if (remaining_space < 0) {
       auto body = std::format(fmt, std::forward<Args>(args)...);
@@ -499,13 +501,15 @@ private:
 
     assert(buf_offset_ <= buf_.size());
 
-    auto res =
-        std::format_to_n(buf_.data() + buf_offset_,
-                         static_cast<ptrdiff_t>(buf_.size() - buf_offset_), fmt,
-                         std::forward<Args>(args)...);
+    auto n = static_cast<ptrdiff_t>(buf_.size() - buf_offset_);
+
+    auto res = std::format_to_n(buf_.data() + buf_offset_, n, fmt,
+                                std::forward<Args>(args)...);
 
     ptrdiff_t remaining_space =
-        buf_.size() - (buf_offset_ + res.size + 1 + config_.reset.size());
+        static_cast<ptrdiff_t>(buf_.size()) -
+        (static_cast<ptrdiff_t>(buf_offset_) + res.size + 1 +
+         static_cast<ptrdiff_t>(config_.reset.size()));
 
     if (remaining_space < 0) {
       auto body = std::format(fmt, std::forward<Args>(args)...);
